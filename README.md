@@ -17,6 +17,15 @@ An MCP server for academic bibliographic search across multiple sources includin
 
 ## Installation
 
+1. **Clone the repository:**
+
+```bash
+git clone https://github.com/francojc/mcp-research.git
+cd mcp-research
+```
+
+2. **Install dependencies:**
+
 ```bash
 uv sync
 ```
@@ -37,10 +46,12 @@ export ZOTERO_API_KEY="your_zotero_api_key"
 ### Getting API Keys
 
 **Semantic Scholar API Key:**
+
 1. Visit [Semantic Scholar API](https://api.semanticscholar.org/)
 2. Register for an API key to access enhanced rate limits
 
 **Zotero API Key:**
+
 1. Go to [Zotero Settings](https://www.zotero.org/settings/keys)
 2. Create a new private key with read and write permissions
 3. Your User ID can be found in your Zotero profile URL
@@ -151,6 +162,7 @@ The MCP Research Server provides seamless integration with Zotero for reference 
      - Choose "Personal library" for individual use
 
 2. **Configure environment variables:**
+
    ```bash
    export ZOTERO_USER_ID="your_user_id"
    export ZOTERO_API_KEY="your_api_key"
@@ -168,29 +180,23 @@ The MCP Research Server provides seamless integration with Zotero for reference 
 - **Duplicate Detection**: Automatically detects existing papers by DOI, arXiv ID, or title similarity
 - **Batch Operations**: Add multiple papers at once from search results
 
-### Usage Examples
+### Usage Through Claude
 
-```javascript
-// Add papers from a search to a collection
-add_to_zotero({
-  papers: "machine learning transformers",
-  collection_name: "Research/AI/Transformers",
-  tag_papers: "important,review-needed",
-  create_collection: true
-})
+Once configured, you can use these tools through Claude Desktop by making natural language requests:
 
-// Create a new collection structure
-create_zotero_collection({
-  collection_name: "Research/Linguistics/Corpus Studies",
-  description: "Papers related to corpus linguistics research"
-})
+**Adding papers to Zotero:**
 
-// List all collections with MCP papers
-list_zotero_collections({
-  show_mcp_items_only: true,
-  show_items_count: true
-})
-```
+> "Search for papers about machine learning transformers and add them to a new Zotero collection called 'Research/AI/Transformers' with the tags 'important' and 'review-needed'"
+
+**Managing collections:**
+
+> "Create a new Zotero collection called 'Research/Linguistics/Corpus Studies' for my corpus linguistics research"
+
+**Browsing your library:**
+
+> "Show me all my Zotero collections and how many papers I've added through MCP Research"
+
+The MCP server will automatically call the appropriate tools (`add_to_zotero`, `create_zotero_collection`, `list_zotero_collections`) based on your requests.
 
 ## Advanced Search Capabilities
 
@@ -198,29 +204,19 @@ The server includes a sophisticated search engine that goes beyond simple keywor
 
 ### Field-Specific Search
 
-Use the `advanced_search_papers` tool for precise control:
+You can request advanced searches through natural language:
 
-```javascript
-advanced_search_papers({
-  title: "neural machine translation",
-  author: "sutskever",
-  venue: "nature",
-  year_start: 2020,
-  year_end: 2024,
-  max_results: 20
-})
-```
+> "Find papers with 'neural machine translation' in the title, authored by Sutskever, published in Nature between 2020 and 2024"
+
+Claude will use the `advanced_search_papers` tool to perform precise field-specific searches.
 
 ### Query Builder
 
-The `build_search_query` tool helps convert natural language descriptions into optimized search queries:
+Ask Claude to help optimize your search queries:
 
-```javascript
-build_search_query({
-  description: "I'm looking for recent papers about large language models in healthcare applications",
-  include_advanced_syntax: true
-})
-```
+> "Help me build a search query to find recent papers about large language models in healthcare applications"
+
+Claude will use the `build_search_query` tool to suggest optimized search terms and syntax.
 
 ### Advanced Search Syntax
 
@@ -243,16 +239,13 @@ Get intelligent paper recommendations using the `recommend_papers` tool:
 - **Citation-based**: Recommendations based on citation networks
 - **Hybrid**: Combines multiple signals for better recommendations
 
-### Usage
+### Usage Through Claude
 
-```javascript
-recommend_papers({
-  seed_paper_titles: "Attention Is All You Need, BERT: Pre-training of Deep Bidirectional Transformers",
-  method: "hybrid",
-  max_recommendations: 15,
-  sources: "arxiv,semantic_scholar"
-})
-```
+Request recommendations using natural language:
+
+> "Based on the papers 'Attention Is All You Need' and 'BERT: Pre-training of Deep Bidirectional Transformers', recommend 15 similar papers using hybrid recommendation methods"
+
+Claude will use the `recommend_papers` tool to find relevant papers using content-based, citation-based, or hybrid approaches.
 
 ## Cache Management
 
@@ -264,15 +257,14 @@ The server includes an intelligent caching system for improved performance:
 - **Paper Cache**: Caches detailed paper information
 - **Citation Cache**: Stores citation data
 
-### Management Commands
+### Management Through Claude
 
-```javascript
-// View cache statistics
-manage_cache({ action: "stats" })
+You can manage the cache system through natural language requests:
 
-// Clean expired entries
-manage_cache({ action: "clean" })
+> "Show me the cache statistics for the MCP Research server"
 
-// Clear all cache data
-manage_cache({ action: "clear" })
-```
+> "Clean up expired cache entries to improve performance"
+
+> "Clear all cached data and start fresh"
+
+Claude will use the `manage_cache` tool with the appropriate actions (stats, clean, clear) based on your requests.
