@@ -52,15 +52,18 @@ Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "mcp-research": {
+   "mcp-research": {
       "command": "uv",
-      "args": ["run", "server.py"],
-      "cwd": "/path/to/mcp-research",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/francojc/.local/mcp/mcp-research",
+        "server.py"
+      ],
       "env": {
         "SEMANTIC_SCHOLAR_API_KEY": "your_api_key",
         "ZOTERO_USER_ID": "your_zotero_user_id",
         "ZOTERO_API_KEY": "your_zotero_api_key"
-      }
     }
   }
 }
