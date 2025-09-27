@@ -513,7 +513,14 @@ class ZoteroClient:
             current_tags = item["data"].get("tags", [])
 
             # Convert current tags to set of tag names
-            current_tag_names = {tag["tag"] for tag in current_tags}
+            current_tag_names = set()
+            for tag in current_tags:
+                if isinstance(tag, dict) and "tag" in tag:
+                    current_tag_names.add(tag["tag"])
+                elif isinstance(tag, str):
+                    current_tag_names.add(tag)
+                else:
+                    self.logger.warning(f"Unexpected tag format: {tag} (type: {type(tag)})")
 
             # Add new tags
             for tag in tags:

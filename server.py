@@ -160,6 +160,64 @@ async def search_papers(
         return f"Search failed: {str(e)}"
 
 
+async def search_and_deduplicate(query: str, sources: List[str], max_results: int = 10) -> SearchResult:
+    """
+    Internal helper function that searches and deduplicates papers, returning SearchResult object.
+    Used by other functions that need access to Paper objects rather than formatted strings.
+    """
+    all_papers = []
+
+    for source in sources:
+        if source == "arxiv" and arxiv_client:
+            try:
+                result = await arxiv_client.search(
+                    query=query,
+                    max_results=max_results,
+                    sort_by="relevance"
+                )
+                all_papers.extend(result.papers)
+                logger.info(f"Found {len(result.papers)} papers from arXiv")
+            except Exception as e:
+                logger.error(f"arXiv search failed: {e}")
+
+        elif source == "semantic_scholar" and semantic_scholar_client:
+            try:
+                result = await semantic_scholar_client.search(
+                    query=query,
+                    max_results=max_results
+                )
+                all_papers.extend(result.papers)
+                logger.info(f"Found {len(result.papers)} papers from Semantic Scholar")
+            except Exception as e:
+                logger.error(f"Semantic Scholar search failed: {e}")
+
+    # Deduplicate papers
+    unique_papers, duplicate_matches = paper_deduplicator.deduplicate_papers(
+        all_papers, similarity_threshold=0.8
+    )
+
+    if duplicate_matches:
+        logger.info(f"Found and removed {len(duplicate_matches)} duplicate pairs")
+
+    # Sort by relevance
+    unique_papers = paper_ranker.sort_papers(
+        unique_papers,
+        criterion=SortCriterion.RELEVANCE,
+        query=query,
+        reverse=True
+    )
+
+    # Limit results
+    unique_papers = unique_papers[:max_results]
+
+    return SearchResult(
+        papers=unique_papers,
+        total_count=len(unique_papers),
+        query=query,
+        source=",".join(sources)
+    )
+
+
 @mcp.tool()
 async def get_paper_details(paper_id: str, source: str) -> str:
     """
