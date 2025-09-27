@@ -212,10 +212,16 @@ With environment variables set, use this minimal config:
 ```
 
 ### How It Works
-The MCP Research Server automatically checks environment variables first:
-- If environment variables are found, they are used
-- If not found, it falls back to any credentials in the config file
-- The server works without any credentials (with limited functionality)
+The MCP Research Server now loads configuration with this precedence:
+
+1. Existing process environment variables (including values passed via the
+   Claude Desktop `env` block).
+2. `.env` file in the project directory (loaded non-overriding).
+3. Built-in defaults: free Semantic Scholar access (no API key) and Zotero
+   disabled.
+
+This means values you set in Claude Desktop’s `env` or your shell take
+priority; the `.env` file only fills in anything missing.
 
 ### Benefits of Environment Variables
 - ✅ **Security**: Credentials not exposed in config files

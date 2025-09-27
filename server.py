@@ -6,6 +6,7 @@ import sys
 from typing import List, Optional, Dict, Any
 
 from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv, find_dotenv
 
 from arxiv_client import ArxivClient
 from semantic_scholar_client import SemanticScholarClient
@@ -27,6 +28,18 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Load environment variables from .env with safe precedence
+# Precedence: existing env (including MCP-passed vars) > .env > defaults
+try:
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path=dotenv_path, override=False)
+        logger.info("Loaded environment from .env (non-overriding)")
+    else:
+        logger.debug("No .env file found; using existing environment only")
+except Exception as e:
+    logger.warning(f"Failed to load .env file: {e}")
 
 # Initialize MCP server
 mcp = FastMCP("academic-search")

@@ -279,6 +279,7 @@ dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dateutil" },
+    { name = "python-dotenv" },
     { name = "pyzotero" },
 ]
 
@@ -301,6 +302,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "python-dateutil", specifier = ">=2.8.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyzotero", specifier = ">=1.6.12" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
 ]
