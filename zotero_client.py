@@ -116,6 +116,8 @@ class ZoteroClient:
                 raise Exception(f"Failed to create item: {response}")
 
             item_key = list(response["success"].keys())[0]
+            # Ensure item_key is a string for consistent handling
+            item_key = str(item_key)
             self.logger.info(f"Created Zotero item {item_key} for paper: {paper.title}")
 
             # Add to collection if specified
