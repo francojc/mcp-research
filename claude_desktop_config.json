@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mcp-research": {
+      "command": "uv",
+      "args": ["run", "--directory", "/Users/francojc/.local/mcp/mcp-research", "server.py"],
+      "env": {
+        "SEMANTIC_SCHOLAR_API_KEY": "your_semantic_scholar_api_key_here"
+      }
+    }
+  }
+}
