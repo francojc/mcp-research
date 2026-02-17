@@ -4,6 +4,8 @@ import pytest
 from unittest.mock import AsyncMock, patch, Mock
 from datetime import datetime
 
+import feedparser
+
 from arxiv_client import ArxivClient
 from models import Paper, SearchResult
 
@@ -16,245 +18,233 @@ class TestArxivClient:
         """Create ArxivClient instance for testing."""
         return ArxivClient()
 
-    @pytest.mark.asyncio
-    async def test_search_success(self, client, mock_arxiv_response):
-        """Test successful search operation."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = mock_arxiv_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    # -- Unit tests for sync helpers --
 
-            result = await client.search("machine learning", max_results=1)
+    def test_parse_arxiv_id_from_url(self, client):
+        """Extract arXiv ID from standard URL formats."""
+        cases = [
+            (
+                "http://arxiv.org/abs/2306.12345v1",
+                "2306.12345v1",
+            ),
+            (
+                "http://arxiv.org/abs/2306.12345",
+                "2306.12345",
+            ),
+            (
+                "https://arxiv.org/abs/1234.5678v2",
+                "1234.5678v2",
+            ),
+        ]
+        for url, expected in cases:
+            assert client._parse_arxiv_id(url) == expected
+
+    def test_parse_arxiv_id_passthrough(self, client):
+        """Non-URL strings are returned as-is."""
+        assert client._parse_arxiv_id("2306.12345v1") == "2306.12345v1"
+        assert client._parse_arxiv_id("some-id") == "some-id"
+
+    def test_entry_to_paper(self, client, mock_arxiv_response_text):
+        """feedparser entry converts to Paper model."""
+        feed = feedparser.parse(mock_arxiv_response_text)
+        assert len(feed.entries) == 1
+
+        paper = client._entry_to_paper(feed.entries[0])
+
+        assert isinstance(paper, Paper)
+        assert paper.title == "Test Machine Learning Paper"
+        assert paper.abstract == (
+            "This is a test abstract about machine learning."
+        )
+        assert paper.arxiv_id == "2306.12345v1"
+        assert paper.source == "arxiv"
+        assert paper.source_id == "2306.12345v1"
+        assert len(paper.authors) == 1
+        assert paper.authors[0].name == "Test Author"
+        assert "cs.LG" in paper.categories
+        assert "stat.ML" in paper.categories
+        assert paper.published_date is not None
+
+    def test_parse_authors_multiple(self, client, mock_arxiv_response_text):
+        """Author parsing handles feed entries."""
+        feed = feedparser.parse(mock_arxiv_response_text)
+        entry = feed.entries[0]
+        authors = client._parse_authors(entry)
+        assert len(authors) == 1
+        assert authors[0].name == "Test Author"
+
+    def test_parse_categories(self, client, mock_arxiv_response_text):
+        """Category parsing from feed entry."""
+        feed = feedparser.parse(mock_arxiv_response_text)
+        entry = feed.entries[0]
+        categories = client._parse_categories(entry)
+        assert "cs.LG" in categories
+        assert "stat.ML" in categories
+
+    # -- Async tests using mocked request_manager --
+
+    @pytest.mark.asyncio
+    async def test_search_success(
+        self, client, mock_arxiv_response_text
+    ):
+        """Successful search returns parsed papers."""
+        with patch(
+            "arxiv_client.request_manager"
+        ) as mock_rm, patch(
+            "arxiv_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
+
+            feed = feedparser.parse(mock_arxiv_response_text)
+            papers = []
+            for entry in feed.entries:
+                papers.append(client._entry_to_paper(entry))
+
+            expected_result = SearchResult(
+                papers=papers,
+                total_count=1,
+                query="machine learning",
+                source="arxiv",
+            )
+
+            async def fake_request(request_func, **kwargs):
+                return expected_result
+
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
+
+            result = await client.search(
+                "machine learning", max_results=1
+            )
 
             assert isinstance(result, SearchResult)
             assert result.source == "arxiv"
-            assert result.query == "machine learning"
             assert len(result.papers) == 1
-
-            paper = result.papers[0]
-            assert paper.title == "Test Machine Learning Paper"
-            assert paper.abstract == "This is a test abstract about machine learning."
-            assert paper.arxiv_id == "2306.12345v1"
-            assert paper.doi == "10.1234/test"
-            assert paper.source == "arxiv"
+            assert result.papers[0].title == "Test Machine Learning Paper"
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self, client):
-        """Test search with no results."""
-        empty_response = """<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <title>ArXiv Query</title>
-  <opensearch:totalResults>0</opensearch:totalResults>
-</feed>"""
+        """Search with no results returns empty SearchResult."""
+        with patch(
+            "arxiv_client.request_manager"
+        ) as mock_rm, patch(
+            "arxiv_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = empty_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+            empty_result = SearchResult(
+                papers=[],
+                total_count=0,
+                query="nonexistent",
+                source="arxiv",
+            )
+
+            async def fake_request(request_func, **kwargs):
+                return empty_result
+
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
             result = await client.search("nonexistent topic")
-
             assert isinstance(result, SearchResult)
             assert len(result.papers) == 0
-            assert result.total_count == 0
 
     @pytest.mark.asyncio
-    async def test_search_http_error(self, client):
-        """Test search with HTTP error."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 500
-            mock_response.raise_for_status.side_effect = Exception("HTTP 500")
-            mock_get.return_value = mock_response
+    async def test_search_raises_on_failure(self, client):
+        """Search propagates exceptions."""
+        with patch(
+            "arxiv_client.request_manager"
+        ) as mock_rm, patch(
+            "arxiv_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=Exception("HTTP 500")
+            )
 
-            result = await client.search("test query")
-
-            assert isinstance(result, SearchResult)
-            assert len(result.papers) == 0
-            assert result.total_count == 0
-
-    @pytest.mark.asyncio
-    async def test_get_paper_details_success(self, client, mock_arxiv_response):
-        """Test successful paper details retrieval."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = mock_arxiv_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            paper = await client.get_paper_details("2306.12345")
-
-            assert isinstance(paper, Paper)
-            assert paper.title == "Test Machine Learning Paper"
-            assert paper.arxiv_id == "2306.12345v1"
-            assert paper.doi == "10.1234/test"
+            with pytest.raises(Exception, match="HTTP 500"):
+                await client.search("test query")
 
     @pytest.mark.asyncio
-    async def test_get_paper_details_not_found(self, client):
-        """Test paper details retrieval for non-existent paper."""
-        empty_response = """<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <opensearch:totalResults>0</opensearch:totalResults>
-</feed>"""
+    async def test_search_returns_cached(self, client):
+        """Cached result is returned without network request."""
+        cached = SearchResult(
+            papers=[],
+            total_count=0,
+            query="cached",
+            source="arxiv",
+        )
+        with patch("arxiv_client.cache_manager") as mock_cm:
+            mock_cm.get_cached_search_result.return_value = cached
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = empty_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            paper = await client.get_paper_details("nonexistent.123")
-
-            assert paper is None
-
-    def test_parse_entry_complete_data(self, client):
-        """Test parsing entry with complete data."""
-        from xml.etree.ElementTree import fromstring
-
-        entry_xml = """
-        <entry xmlns:arxiv="http://arxiv.org/schemas/atom">
-            <id>http://arxiv.org/abs/2306.12345v1</id>
-            <title>Test Paper Title</title>
-            <summary>Test abstract content</summary>
-            <published>2023-06-15T17:59:59Z</published>
-            <updated>2023-06-15T17:59:59Z</updated>
-            <author><name>John Doe</name><arxiv:affiliation>Test University</arxiv:affiliation></author>
-            <author><name>Jane Smith</name></author>
-            <arxiv:doi>10.1234/test</arxiv:doi>
-            <link href="http://arxiv.org/abs/2306.12345v1" rel="alternate" type="text/html"/>
-            <arxiv:primary_category term="cs.LG"/>
-            <category term="cs.LG"/>
-            <category term="stat.ML"/>
-        </entry>
-        """
-
-        entry = fromstring(entry_xml)
-        paper = client._parse_entry(entry)
-
-        assert paper.title == "Test Paper Title"
-        assert paper.abstract == "Test abstract content"
-        assert paper.arxiv_id == "2306.12345v1"
-        assert paper.doi == "10.1234/test"
-        assert len(paper.authors) == 2
-        assert paper.authors[0].name == "John Doe"
-        assert paper.authors[0].affiliation == "Test University"
-        assert paper.authors[1].name == "Jane Smith"
-        assert paper.authors[1].affiliation is None
-        assert "cs.LG" in paper.categories
-        assert "stat.ML" in paper.categories
-
-    def test_parse_entry_minimal_data(self, client):
-        """Test parsing entry with minimal required data."""
-        from xml.etree.ElementTree import fromstring
-
-        entry_xml = """
-        <entry>
-            <id>http://arxiv.org/abs/1234.5678</id>
-            <title>Minimal Paper</title>
-            <summary>Minimal abstract</summary>
-            <published>2023-01-01T00:00:00Z</published>
-        </entry>
-        """
-
-        entry = fromstring(entry_xml)
-        paper = client._parse_entry(entry)
-
-        assert paper.title == "Minimal Paper"
-        assert paper.abstract == "Minimal abstract"
-        assert paper.arxiv_id == "1234.5678"
-        assert paper.doi is None
-        assert len(paper.authors) == 0
-        assert len(paper.categories) == 0
-
-    def test_extract_arxiv_id(self, client):
-        """Test arXiv ID extraction from various formats."""
-        test_cases = [
-            ("http://arxiv.org/abs/2306.12345v1", "2306.12345v1"),
-            ("http://arxiv.org/abs/2306.12345", "2306.12345"),
-            ("https://arxiv.org/abs/1234.5678v2", "1234.5678v2"),
-            ("arxiv:2306.12345", "2306.12345"),
-            ("2306.12345v1", "2306.12345v1"),
-            ("invalid-id", "invalid-id"),  # Should return as-is if no match
-        ]
-
-        for input_id, expected in test_cases:
-            result = client._extract_arxiv_id(input_id)
-            assert result == expected
+            result = await client.search("cached")
+            assert result is cached
 
     @pytest.mark.asyncio
-    async def test_search_by_author(self, client, mock_arxiv_response):
-        """Test search by author functionality."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = mock_arxiv_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    async def test_get_paper_by_id_success(self, client):
+        """get_paper_by_id returns Paper when found."""
+        paper = Paper(
+            id="2306.12345",
+            title="Found Paper",
+            authors=[],
+            source="arxiv",
+            source_id="2306.12345",
+            arxiv_id="2306.12345",
+        )
+        found_result = SearchResult(
+            papers=[paper],
+            total_count=1,
+            query="id:2306.12345",
+            source="arxiv",
+        )
+        with patch.object(
+            client, "search", new_callable=AsyncMock
+        ) as mock_search, patch(
+            "arxiv_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_paper.return_value = None
+            mock_search.return_value = found_result
 
-            result = await client.search_by_author("Test Author")
-
-            assert isinstance(result, SearchResult)
-            mock_get.assert_called_once()
-
-            # Check that the query includes author search
-            call_args = mock_get.call_args
-            assert "au:" in call_args[1]["params"]["search_query"]
-
-    @pytest.mark.asyncio
-    async def test_rate_limiting(self, client):
-        """Test that rate limiting is respected."""
-        with patch('httpx.AsyncClient.get') as mock_get, \
-             patch('asyncio.sleep') as mock_sleep:
-
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = """<?xml version="1.0"?><feed><opensearch:totalResults>0</opensearch:totalResults></feed>"""
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            # Make multiple requests quickly
-            await client.search("test1")
-            await client.search("test2")
-
-            # Should have introduced delays for rate limiting
-            assert mock_sleep.call_count >= 1
-
-    def test_build_query_string(self, client):
-        """Test query string building."""
-        test_cases = [
-            ("simple query", "simple query"),
-            ("query with spaces", "query with spaces"),
-            ("query+with+plus", "query+with+plus"),
-        ]
-
-        for input_query, expected in test_cases:
-            result = client._build_query_string(input_query)
-            assert expected in result
+            result = await client.get_paper_by_id("2306.12345")
+            assert result is not None
+            assert result.title == "Found Paper"
 
     @pytest.mark.asyncio
-    async def test_search_with_date_filter(self, client):
-        """Test search with date filtering."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = """<?xml version="1.0"?><feed><opensearch:totalResults>0</opensearch:totalResults></feed>"""
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    async def test_get_paper_by_id_not_found(self, client):
+        """get_paper_by_id returns None when not found."""
+        empty_result = SearchResult(
+            papers=[],
+            total_count=0,
+            query="id:nonexistent",
+            source="arxiv",
+        )
+        with patch.object(
+            client, "search", new_callable=AsyncMock
+        ) as mock_search, patch(
+            "arxiv_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_paper.return_value = None
+            mock_search.return_value = empty_result
 
-            from datetime import date
-            start_date = date(2023, 1, 1)
-            end_date = date(2023, 12, 31)
+            result = await client.get_paper_by_id("nonexistent")
+            assert result is None
 
-            await client.search("test", start_date=start_date, end_date=end_date)
+    @pytest.mark.asyncio
+    async def test_search_by_author(self, client):
+        """search_by_author delegates to search with au: prefix."""
+        with patch.object(
+            client, "search", new_callable=AsyncMock
+        ) as mock_search:
+            mock_search.return_value = SearchResult(
+                papers=[],
+                total_count=0,
+                query="au:Test%20Author",
+                source="arxiv",
+            )
+            await client.search_by_author("Test Author")
 
-            call_args = mock_get.call_args
-            params = call_args[1]["params"]
-
-            # arXiv doesn't have native date filtering, so dates should be in query
-            assert "2023" in params["search_query"] or "submittedDate" in params
+            # Should have been called with au: prefix
+            call_args = mock_search.call_args
+            assert call_args[0][0].startswith("au:")

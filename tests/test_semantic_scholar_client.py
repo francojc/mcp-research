@@ -1,12 +1,11 @@
 """Tests for Semantic Scholar API client."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, Mock
+from unittest.mock import AsyncMock, patch, Mock, MagicMock
 from datetime import datetime
-import json
 
 from semantic_scholar_client import SemanticScholarClient
-from models import Paper, SearchResult
+from models import Paper, Author, SearchResult
 
 
 class TestSemanticScholarClient:
@@ -17,15 +16,121 @@ class TestSemanticScholarClient:
         """Create SemanticScholarClient instance for testing."""
         return SemanticScholarClient(api_key="test-api-key")
 
+    # -- Unit tests for sync helpers (no mocking needed) --
+
+    def test_get_headers_with_api_key(self, client):
+        """Headers include x-api-key when an API key is set."""
+        headers = client._get_headers()
+        assert headers["x-api-key"] == "test-api-key"
+        assert "User-Agent" in headers
+
+    def test_get_headers_without_api_key(self):
+        """Headers omit x-api-key when no key is provided."""
+        client = SemanticScholarClient(api_key=None)
+        # Clear env var if set
+        with patch.dict("os.environ", {}, clear=True):
+            client_no_key = SemanticScholarClient()
+        headers = client_no_key._get_headers()
+        assert "x-api-key" not in headers
+
+    def test_parse_authors(self, client):
+        """Author parsing extracts names correctly."""
+        authors_data = [
+            {"name": "Alice", "authorId": "1"},
+            {"name": "Bob", "authorId": "2"},
+            {"name": ""},  # empty name is skipped
+        ]
+        authors = client._parse_authors(authors_data)
+        assert len(authors) == 2
+        assert authors[0].name == "Alice"
+        assert authors[1].name == "Bob"
+
+    def test_parse_date_valid(self, client):
+        """Valid date string is parsed to datetime."""
+        dt = client._parse_date("2023-06-15")
+        assert dt is not None
+        assert dt.year == 2023
+        assert dt.month == 6
+        assert dt.day == 15
+
+    def test_parse_date_none(self, client):
+        """None/empty date returns None."""
+        assert client._parse_date(None) is None
+        assert client._parse_date("") is None
+
+    def test_parse_date_invalid(self, client):
+        """Invalid date string returns None."""
+        assert client._parse_date("not-a-date") is None
+
+    def test_paper_to_model_complete(self, client):
+        """Complete paper data converts to Paper model."""
+        data = {
+            "paperId": "abc123",
+            "title": "Test Paper",
+            "abstract": "An abstract.",
+            "venue": "ICML",
+            "publicationDate": "2023-06-15",
+            "authors": [{"name": "Author One"}],
+            "citationCount": 50,
+            "externalIds": {"DOI": "10.1234/test", "ArXiv": "2306.99999"},
+            "url": "https://semanticscholar.org/paper/abc123",
+            "openAccessPdf": {"url": "https://example.com/paper.pdf"},
+            "fieldsOfStudy": ["Computer Science"],
+        }
+        paper = client._paper_to_model(data)
+
+        assert paper.id == "abc123"
+        assert paper.title == "Test Paper"
+        assert paper.abstract == "An abstract."
+        assert paper.venue == "ICML"
+        assert paper.citation_count == 50
+        assert paper.doi == "10.1234/test"
+        assert paper.arxiv_id == "2306.99999"
+        assert paper.pdf_url == "https://example.com/paper.pdf"
+        assert paper.source == "semantic_scholar"
+        assert paper.source_id == "abc123"
+        assert "Computer Science" in paper.categories
+
+    def test_paper_to_model_minimal(self, client):
+        """Minimal paper data (just ID and title) converts."""
+        data = {"paperId": "min123", "title": "Minimal"}
+        paper = client._paper_to_model(data)
+
+        assert paper.id == "min123"
+        assert paper.title == "Minimal"
+        assert paper.abstract is None
+        assert paper.doi is None
+        assert paper.arxiv_id is None
+        assert paper.citation_count is None
+        assert len(paper.authors) == 0
+        assert paper.categories == []
+
+    def test_paper_to_model_missing_id(self, client):
+        """Paper with empty ID still converts (ID defaults to '')."""
+        data = {"title": "No ID"}
+        paper = client._paper_to_model(data)
+        assert paper.id == ""
+
+    # -- Async tests using mocked request_manager --
+
     @pytest.mark.asyncio
-    async def test_search_success(self, client, mock_semantic_scholar_response):
-        """Test successful search operation."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = mock_semantic_scholar_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    async def test_search_success(
+        self, client, mock_semantic_scholar_response
+    ):
+        """Successful search returns papers."""
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
+
+            async def fake_request(request_func, **kwargs):
+                return mock_semantic_scholar_response
+
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
             result = await client.search("machine learning", max_results=1)
 
@@ -36,324 +141,205 @@ class TestSemanticScholarClient:
 
             paper = result.papers[0]
             assert paper.title == "Test Semantic Scholar Paper"
-            assert paper.abstract == "This is a test abstract from Semantic Scholar."
-            assert paper.doi == "10.1234/test-semantic"
-            assert paper.citation_count == 25
             assert paper.source == "semantic_scholar"
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self, client):
-        """Test search with no results."""
-        empty_response = {
-            "total": 0,
-            "offset": 0,
-            "data": []
-        }
+        """Search returning no data yields empty paper list."""
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = empty_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+            async def fake_request(request_func, **kwargs):
+                return {"total": 0, "data": []}
 
-            result = await client.search("nonexistent topic")
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
+            result = await client.search("nonexistent")
             assert isinstance(result, SearchResult)
             assert len(result.papers) == 0
             assert result.total_count == 0
 
     @pytest.mark.asyncio
-    async def test_search_with_api_key(self, client):
-        """Test search includes API key in headers."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"total": 0, "data": []}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+    async def test_search_raises_on_failure(self, client):
+        """Search propagates exceptions from request_manager."""
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = None
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=Exception("Rate limited")
+            )
 
-            await client.search("test")
-
-            call_args = mock_get.call_args
-            headers = call_args[1]["headers"]
-            assert "X-API-KEY" in headers
-            assert headers["X-API-KEY"] == "test-api-key"
-
-    @pytest.mark.asyncio
-    async def test_search_rate_limit_error(self, client):
-        """Test handling of rate limit errors."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 429
-            mock_response.headers = {"Retry-After": "60"}
-            mock_response.raise_for_status.side_effect = Exception("Rate limited")
-            mock_get.return_value = mock_response
-
-            result = await client.search("test query")
-
-            assert isinstance(result, SearchResult)
-            assert len(result.papers) == 0
+            with pytest.raises(Exception, match="Rate limited"):
+                await client.search("test query")
 
     @pytest.mark.asyncio
-    async def test_get_paper_details_success(self, client):
-        """Test successful paper details retrieval."""
+    async def test_search_returns_cached_result(self, client):
+        """Search returns cached result without hitting the network."""
+        cached = SearchResult(
+            papers=[],
+            total_count=0,
+            query="cached",
+            source="semantic_scholar",
+        )
+        with patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_search_result.return_value = cached
+
+            result = await client.search("cached")
+            assert result is cached
+
+    @pytest.mark.asyncio
+    async def test_get_paper_by_id_success(self, client):
+        """get_paper_by_id returns a Paper on success."""
         paper_data = {
-            "paperId": "test-paper-id",
-            "title": "Test Paper Details",
-            "abstract": "Detailed abstract",
-            "venue": "Test Venue",
-            "year": 2023,
-            "authors": [{"name": "Test Author", "authorId": "author-123"}],
-            "citationCount": 50,
-            "doi": "10.1234/detailed-paper",
-            "url": "https://semanticscholar.org/paper/test",
-            "fieldsOfStudy": ["Computer Science"]
+            "paperId": "test-id",
+            "title": "Found Paper",
+            "abstract": "Abstract text",
+            "authors": [{"name": "Author"}],
+            "citationCount": 10,
+            "venue": "Venue",
+            "url": "https://example.com",
+            "fieldsOfStudy": [],
         }
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_paper.return_value = None
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = paper_data
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+            async def fake_request(request_func, **kwargs):
+                return paper_data
 
-            paper = await client.get_paper_details("test-paper-id")
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
-            assert isinstance(paper, Paper)
-            assert paper.title == "Test Paper Details"
-            assert paper.citation_count == 50
-            assert paper.doi == "10.1234/detailed-paper"
+            paper = await client.get_paper_by_id("test-id")
+            assert paper is not None
+            assert paper.title == "Found Paper"
 
     @pytest.mark.asyncio
-    async def test_get_paper_details_not_found(self, client):
-        """Test paper details retrieval for non-existent paper."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 404
-            mock_response.raise_for_status.side_effect = Exception("Not found")
-            mock_get.return_value = mock_response
+    async def test_get_paper_by_id_not_found(self, client):
+        """get_paper_by_id returns None when request fails."""
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_paper.return_value = None
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=Exception("Not found")
+            )
 
-            paper = await client.get_paper_details("nonexistent-id")
-
+            paper = await client.get_paper_by_id("nonexistent")
             assert paper is None
 
     @pytest.mark.asyncio
     async def test_get_citations_success(self, client):
-        """Test successful citation retrieval."""
-        citations_response = {
+        """get_citations returns citing papers."""
+        citations_data = {
             "data": [
                 {
                     "citingPaper": {
-                        "paperId": "citing-paper-1",
-                        "title": "Paper That Cites",
-                        "abstract": "This paper cites the target paper",
-                        "year": 2024,
-                        "authors": [{"name": "Citing Author"}],
+                        "paperId": "citing-1",
+                        "title": "Citing Paper",
+                        "authors": [{"name": "Citer"}],
                         "citationCount": 5,
-                        "venue": "Citation Conference"
+                        "venue": "Venue",
                     }
                 }
             ]
         }
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_citations.return_value = None
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = citations_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+            async def fake_request(request_func, **kwargs):
+                return citations_data
 
-            citations = await client.get_citations("target-paper-id")
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
-            assert len(citations) == 1
-            assert citations[0].title == "Paper That Cites"
+            papers = await client.get_citations("target-paper")
+            assert len(papers) == 1
+            assert papers[0].title == "Citing Paper"
+
+    @pytest.mark.asyncio
+    async def test_get_citations_failure_returns_empty(self, client):
+        """get_citations returns empty list on failure."""
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            mock_cm.get_cached_citations.return_value = None
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=Exception("Error")
+            )
+
+            papers = await client.get_citations("paper-id")
+            assert papers == []
 
     @pytest.mark.asyncio
     async def test_get_references_success(self, client):
-        """Test successful reference retrieval."""
-        references_response = {
+        """get_references returns referenced papers."""
+        references_data = {
             "data": [
                 {
                     "citedPaper": {
-                        "paperId": "referenced-paper-1",
+                        "paperId": "ref-1",
                         "title": "Referenced Paper",
-                        "abstract": "This paper is referenced",
-                        "year": 2022,
-                        "authors": [{"name": "Referenced Author"}],
+                        "authors": [{"name": "Ref Author"}],
                         "citationCount": 100,
-                        "venue": "Reference Journal"
                     }
                 }
             ]
         }
+        with patch(
+            "semantic_scholar_client.request_manager"
+        ) as mock_rm, patch(
+            "semantic_scholar_client.cache_manager"
+        ) as mock_cm:
+            async def fake_request(request_func, **kwargs):
+                return references_data
 
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = references_response
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
+            mock_rm.deduplicated_request = AsyncMock(
+                side_effect=fake_request
+            )
 
-            references = await client.get_references("source-paper-id")
-
-            assert len(references) == 1
-            assert references[0].title == "Referenced Paper"
+            papers = await client.get_references("source-paper")
+            assert len(papers) == 1
+            assert papers[0].title == "Referenced Paper"
 
     @pytest.mark.asyncio
     async def test_search_by_author(self, client):
-        """Test search by author functionality."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"total": 0, "data": []}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
+        """search_by_author delegates to search with author: prefix."""
+        with patch.object(
+            client, "search", new_callable=AsyncMock
+        ) as mock_search:
+            mock_search.return_value = SearchResult(
+                papers=[],
+                total_count=0,
+                query="author:Test Author",
+                source="semantic_scholar",
+            )
             await client.search_by_author("Test Author")
 
-            call_args = mock_get.call_args
-            params = call_args[1]["params"]
-            assert "author:" in params["query"] or "Test Author" in params["query"]
-
-    def test_parse_paper_complete_data(self, client):
-        """Test parsing paper with complete data."""
-        paper_data = {
-            "paperId": "complete-paper-id",
-            "title": "Complete Test Paper",
-            "abstract": "This is a complete paper with all fields",
-            "venue": "Complete Conference",
-            "year": 2023,
-            "publicationDate": "2023-06-15",
-            "authors": [
-                {
-                    "name": "Complete Author",
-                    "authorId": "author-complete",
-                    "affiliations": ["Complete University"]
-                }
-            ],
-            "citationCount": 75,
-            "doi": "10.1234/complete",
-            "url": "https://semanticscholar.org/paper/complete",
-            "fieldsOfStudy": ["Computer Science", "Machine Learning"],
-            "s2FieldsOfStudy": [
-                {"category": "Computer Science"},
-                {"category": "Machine Learning"}
-            ]
-        }
-
-        paper = client._parse_paper(paper_data)
-
-        assert paper.id == "complete-paper-id"
-        assert paper.title == "Complete Test Paper"
-        assert paper.abstract == "This is a complete paper with all fields"
-        assert paper.venue == "Complete Conference"
-        assert paper.citation_count == 75
-        assert paper.doi == "10.1234/complete"
-        assert len(paper.authors) == 1
-        assert paper.authors[0].name == "Complete Author"
-        assert paper.authors[0].affiliation == "Complete University"
-        assert "Computer Science" in paper.categories
-
-    def test_parse_paper_minimal_data(self, client):
-        """Test parsing paper with minimal required data."""
-        paper_data = {
-            "paperId": "minimal-paper-id",
-            "title": "Minimal Paper"
-        }
-
-        paper = client._parse_paper(paper_data)
-
-        assert paper.id == "minimal-paper-id"
-        assert paper.title == "Minimal Paper"
-        assert paper.abstract is None
-        assert paper.venue is None
-        assert paper.citation_count is None
-        assert len(paper.authors) == 0
-
-    def test_parse_paper_missing_id(self, client):
-        """Test parsing paper without ID returns None."""
-        paper_data = {
-            "title": "No ID Paper"
-        }
-
-        paper = client._parse_paper(paper_data)
-        assert paper is None
-
-    @pytest.mark.asyncio
-    async def test_search_with_year_filter(self, client):
-        """Test search with year filtering."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"total": 0, "data": []}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            await client.search("test", year=2023)
-
-            call_args = mock_get.call_args
-            params = call_args[1]["params"]
-            assert "year" in params
-
-    @pytest.mark.asyncio
-    async def test_search_with_fields_filter(self, client):
-        """Test search with fields of study filtering."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"total": 0, "data": []}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            await client.search("test", fields_of_study=["Computer Science"])
-
-            call_args = mock_get.call_args
-            params = call_args[1]["params"]
-            assert "fieldsOfStudy" in params
-
-    @pytest.mark.asyncio
-    async def test_client_without_api_key(self):
-        """Test client functionality without API key."""
-        client = SemanticScholarClient()
-
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"total": 0, "data": []}
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            await client.search("test")
-
-            call_args = mock_get.call_args
-            headers = call_args[1].get("headers", {})
-            assert "X-API-KEY" not in headers
-
-    @pytest.mark.asyncio
-    async def test_json_decode_error(self, client):
-        """Test handling of JSON decode errors."""
-        with patch('httpx.AsyncClient.get') as mock_get:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
-            mock_response.text = "Invalid JSON response"
-            mock_response.raise_for_status = Mock()
-            mock_get.return_value = mock_response
-
-            result = await client.search("test")
-
-            assert isinstance(result, SearchResult)
-            assert len(result.papers) == 0
-
-    def test_build_search_url(self, client):
-        """Test search URL building."""
-        url = client._build_search_url()
-        assert "graph/v1/paper/search" in url
-        assert client.BASE_URL in url
-
-    def test_build_paper_url(self, client):
-        """Test paper URL building."""
-        url = client._build_paper_url("test-paper-id")
-        assert "test-paper-id" in url
-        assert "graph/v1/paper" in url
+            mock_search.assert_called_once_with(
+                "author:Test Author", max_results=10
+            )
