@@ -31,6 +31,7 @@
 ### Basic Setup (No API Keys Required)
 
 The server works without any API keys, but with limited functionality:
+
 - arXiv search (unlimited, no key needed)
 - Google Scholar search (rate limited)
 - Basic paper details and citations
@@ -38,9 +39,11 @@ The server works without any API keys, but with limited functionality:
 ### Enhanced Setup (Recommended)
 
 #### Semantic Scholar API Key
+
 Provides enhanced rate limits and premium features.
 
 **Get your key**:
+
 1. Visit https://www.semanticscholar.org/product/api
 2. Sign up for a free account
 3. Generate an API key
