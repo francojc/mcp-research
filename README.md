@@ -68,7 +68,7 @@ Add to your `claude_desktop_config.json`:
       "args": [
         "run",
         "--directory",
-        "/Users/francojc/.local/mcp/mcp-research",
+        "/Users/user/.local/mcp/mcp-research",
         "server.py"
       ],
       "env": {
@@ -79,6 +79,8 @@ Add to your `claude_desktop_config.json`:
   }
 }
 ```
+
+*Note: Adjust the `--directory` path to where you cloned the repository. You may also need to provide an absolute path to the `uv` command if it's not in your system PATH.*
 
 ## Available Tools
 
