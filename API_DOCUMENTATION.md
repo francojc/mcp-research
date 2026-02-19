@@ -50,11 +50,13 @@ The MCP Research Server provides comprehensive academic bibliographic search cap
 ### API Keys & Credentials
 
 #### Semantic Scholar API Key (Optional but Recommended)
+
 - **Purpose**: Enhanced rate limits and access to premium features
 - **How to get**: Visit [Semantic Scholar API](https://www.semanticscholar.org/product/api) and sign up
 - **Required**: No, but recommended for heavy usage
 
 #### Zotero API Credentials (Required for Zotero Integration)
+
 - **Purpose**: Add papers directly to your Zotero library with automatic tagging
 - **How to get**:
   1. Visit [Zotero Settings](https://www.zotero.org/settings/keys) (requires Zotero account)
@@ -64,6 +66,7 @@ The MCP Research Server provides comprehensive academic bibliographic search cap
 - **Required**: Only if you want to use Zotero integration tools (`add_to_zotero`, `create_zotero_collection`, `list_zotero_collections`)
 
 #### Environment Variables
+
 If you prefer not to store credentials in the config file, you can set these environment variables:
 - `SEMANTIC_SCHOLAR_API_KEY`
 - `ZOTERO_USER_ID`
@@ -78,6 +81,7 @@ If you prefer not to store credentials in the config file, you can set these env
 **Description**: Search for academic papers across multiple sources with intelligent deduplication and ranking.
 
 **Parameters**:
+
 - `query` (string, required): Search query
 - `max_results` (integer, default: 10): Maximum number of results to return
 - `sources` (string, default: "arxiv,semantic_scholar"): Comma-separated list of sources to search
@@ -92,6 +96,7 @@ search_papers(
 ```
 
 **Response Format**:
+
 ```
 Found 15 papers matching your query:
 
@@ -111,10 +116,12 @@ Found 15 papers matching your query:
 **Description**: Get detailed information about a specific paper.
 
 **Parameters**:
+
 - `paper_id` (string, required): Paper identifier (DOI, arXiv ID, or source-specific ID)
 - `source` (string, optional): Preferred source to search ("arxiv", "semantic_scholar", "google_scholar")
 
 **Example**:
+
 ```
 get_paper_details(
     paper_id="2306.12345",
@@ -127,11 +134,13 @@ get_paper_details(
 **Description**: Get papers that cite a specific paper.
 
 **Parameters**:
+
 - `paper_id` (string, required): Paper identifier
 - `source` (string, default: "semantic_scholar"): Source to get citations from
 - `max_results` (integer, default: 10): Maximum citations to retrieve
 
 **Example**:
+
 ```
 get_citations(
     paper_id="10.1234/example.doi",
@@ -145,11 +154,13 @@ get_citations(
 **Description**: Export papers to various bibliography formats.
 
 **Parameters**:
+
 - `papers` (string, required): Comma-separated paper IDs or search query
 - `format` (string, default: "bibtex"): Export format ("bibtex", "ris", "csl_json")
 - `output_file` (string, optional): File path to save export
 
 **Supported Formats**:
+
 - `bibtex`: BibTeX format for LaTeX
 - `ris`: RIS format for reference managers
 - `csl_json`: Citation Style Language JSON
@@ -168,11 +179,13 @@ export_bibliography(
 **Description**: Find papers by a specific author across multiple sources.
 
 **Parameters**:
+
 - `author_name` (string, required): Author name to search for
 - `max_results` (integer, default: 10): Maximum papers to retrieve
 - `sources` (string, default: "arxiv,semantic_scholar"): Sources to search
 
 **Example**:
+
 ```
 search_author_papers(
     author_name="Geoffrey Hinton",
@@ -186,9 +199,11 @@ search_author_papers(
 **Description**: Manage the caching system for improved performance.
 
 **Parameters**:
+
 - `action` (string, required): Action to perform ("stats", "cleanup", "clear")
 
 **Actions**:
+
 - `stats`: Show cache statistics
 - `cleanup`: Remove expired cache entries
 - `clear`: Clear all cached data
